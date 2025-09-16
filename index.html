@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Photo Entry Export Tool</title>
+  <style>
+    :root{--brand-1:#004030;--brand-2:#4A9782;--bg:#FFF9E5}
+    html,body{height:100%;margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:#042;touch-action:manipulation}
+    .app{max-width:1100px;margin:18px auto;padding:14px}
+    header{display:flex;align-items:center;justify-content:space-between}
+    header h1{font-size:18px;margin:0;color:var(--brand-1)}
+    .controls{display:flex;gap:8px;align-items:center}
+    button{background:var(--brand-2);color:white;border:none;padding:8px 10px;border-radius:8px;font-weight:600;cursor:pointer}
+    .rows{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+
+    /* entry card */
+    .row{display:flex;gap:12px;align-items:flex-start;background:white;padding:10px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+    .thumb{width:110px;height:110px;border:1px solid #ccc;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#fafafa}
+    .thumb img{width:100%;height:100%;object-fit:cover}
+    .fields{flex:1;display:flex;flex-direction:column;gap:8px}
+    .top-row{display:flex;gap:8px}
+    .top-row input[type=text]{flex:1;padding:8px;border-radius:6px;border:1px solid #ccc}
+    textarea{width:100%;min-height:56px;padding:8px;border-radius:6px;border:1px solid #ccc}
+
+    /* meta row horizontally */
+    .meta-row{display:flex;gap:8px}
+    .meta-row input{flex:1;padding:8px;border-radius:6px;border:1px solid #ccc}
+
+    .row-actions{display:flex;flex-direction:column;gap:8px}
+    .small{padding:6px 8px;font-size:13px}
+
+    /* print area (offscreen but renderable) */
+    #printArea{position:absolute;left:-9999px;top:0;width:210mm}
+    .print-page{width:210mm;min-height:297mm;padding:12mm;box-sizing:border-box;background:white}
+    .print-entry{display:flex;gap:12px;align-items:flex-start;margin-bottom:8px}
+    .print-entry img{width:80px;height:80px;object-fit:cover;border:1px solid #444}
+    .print-text{flex:1}
+    .print-meta{display:flex;gap:10px;font-size:12px;margin-top:6px}
+    .print-meta div{min-width:0;flex:1}
+
+    @media(max-width:720px){
+      .meta-row{flex-direction:column}
+      .top-row{flex-direction:column}
+      .row{flex-direction:column}
+      .thumb{width:100%;height:200px}
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Photo Entry Export Tool</h1>
+      <div class="controls">
+        <input id="importCsv" type="file" accept=".csv" style="display:none">
+        <button onclick="document.getElementById('importCsv').click()">Import CSV</button>
+        <button id="exportPdf">Export PDF</button>
+        <button id="exportCsv">Export CSV</button>
+      </div>
+    </header>
+
+    <p class="muted">Fill Name + upload Photo — a new blank row will appear automatically. Max 10 entries per PDF page.</p>
+
+    <div class="rows" id="rows"></div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <button id="addRow">+ Add Row</button>
+      <div class="muted">Rows: <span id="count">0</span></div>
+    </div>
+
+    <!-- offscreen print area for PDF rendering (kept offscreen so users don't see it) -->
+    <div id="printArea" aria-hidden="true"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script>
+    // state
+    let entries = [];
+    const rowsEl = document.getElementById('rows');
+    const printArea = document.getElementById('printArea');
+    const MAX_ROWS_PER_PAGE = 10;
+    const countEl = document.getElementById('count');
+
+    function updateCount(){ countEl.textContent = entries.length }
+
+    // create UI row
+    function createRow(init = null){
+      const data = init || {id:Date.now()+Math.random(), name:'', notes:'', height:'', width:'', price:'', diameter:'', weight:'', imageData:''};
+      entries.push(data);
+      const idx = entries.length - 1;
+
+      const row = document.createElement('div'); row.className = 'row'; row.dataset.idx = idx;
+
+      // thumb + upload button
+      const thumb = document.createElement('div'); thumb.className = 'thumb';
+      const img = document.createElement('img'); if(data.imageData) img.src = data.imageData; else img.src = '';
+      thumb.appendChild(img);
+      const file = document.createElement('input'); file.type='file'; file.accept='image/*'; file.style.display='none';
+      const uploadBtn = document.createElement('button'); uploadBtn.className='small'; uploadBtn.textContent='Upload Photo';
+      uploadBtn.onclick = ()=> file.click();
+      file.onchange = async (e)=>{
+        const f = e.target.files[0]; if(!f) return;
+        data.imageData = await fileToDataURL(f);
+        img.src = data.imageData;
+        checkAutoAdd(row, data);
+      };
+
+      // fields: name + description
+      const fields = document.createElement('div'); fields.className='fields';
+      const topRow = document.createElement('div'); topRow.className='top-row';
+      const nameIn = document.createElement('input'); nameIn.type='text'; nameIn.placeholder='Name'; nameIn.value = data.name || '';
+      nameIn.oninput = ()=>{ data.name = nameIn.value; checkAutoAdd(row,data) };
+      topRow.appendChild(nameIn);
+
+      const notes = document.createElement('textarea'); notes.placeholder='Description'; notes.value = data.notes || '';
+      notes.oninput = ()=> data.notes = notes.value;
+
+      // meta row (horizontal inputs)
+      const metaRow = document.createElement('div'); metaRow.className='meta-row';
+      const hIn = document.createElement('input'); hIn.placeholder='Height'; hIn.value = data.height || ''; hIn.oninput = ()=> data.height = hIn.value;
+      const wIn = document.createElement('input'); wIn.placeholder='Width'; wIn.value = data.width || ''; wIn.oninput = ()=> data.width = wIn.value;
+      const pIn = document.createElement('input'); pIn.placeholder='Price'; pIn.value = data.price || ''; pIn.oninput = ()=> data.price = pIn.value;
+      const dIn = document.createElement('input'); dIn.placeholder='Diameter'; dIn.value = data.diameter || ''; dIn.oninput = ()=> data.diameter = dIn.value;
+      const wtIn = document.createElement('input'); wtIn.placeholder='Weight'; wtIn.value = data.weight || ''; wtIn.oninput = ()=> data.weight = wtIn.value;
+
+      metaRow.append(hIn,wIn,pIn,dIn,wtIn);
+
+      // actions
+      const actions = document.createElement('div'); actions.className='row-actions';
+      const removeBtn = document.createElement('button'); removeBtn.className='small'; removeBtn.textContent='Remove';
+      removeBtn.onclick = ()=>{ removeRow(idx); };
+      actions.append(uploadBtn,file,removeBtn);
+
+      fields.appendChild(topRow);
+      fields.appendChild(notes);
+      fields.appendChild(metaRow);
+
+      row.appendChild(thumb); row.appendChild(fields); row.appendChild(actions);
+      rowsEl.appendChild(row);
+      updateCount();
+
+      // if last row and both image+name present, auto add next row
+      checkAutoAdd(row,data);
+    }
+
+    function fileToDataURL(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); }) }
+
+    function checkAutoAdd(rowEl, data){
+      const idx = Number(rowEl.dataset.idx);
+      const isLast = idx === entries.length - 1;
+      const hasName = data.name && data.name.trim().length>0;
+      const hasImage = data.imageData && data.imageData.length>0;
+      if(isLast && hasName && hasImage){ createRow(); }
+    }
+
+    function removeRow(index){
+      entries.splice(index,1);
+      // re-render
+      rowsEl.innerHTML='';
+      const copy = entries.slice(); entries = [];
+      copy.forEach(c=>createRow(c));
+      updateCount();
+    }
+
+    // CSV export/import
+    document.getElementById('exportCsv').addEventListener('click', ()=>{
+      if(entries.length===0) return alert('No entries to export');
+      // ensure imageData included (data URLs)
+      const rows = entries.map(e=>({id:e.id||'',name:e.name||'',notes:e.notes||'',height:e.height||'',width:e.width||'',price:e.price||'',diameter:e.diameter||'',weight:e.weight||'',imageData:e.imageData||''}));
+      const csv = Papa.unparse(rows);
+      const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'export.csv'; a.click();
+    });
+
+    document.getElementById('importCsv').addEventListener('change', (e)=>{
+      const f = e.target.files[0]; if(!f) return;
+      Papa.parse(f,{header:true,complete:function(res){
+        const data = res.data.filter(r => (r.name && r.name.trim().length>0) || (r.imageData && r.imageData.trim().length>0));
+        if(data.length===0) return alert('No usable rows found in CSV');
+        entries = [];
+        rowsEl.innerHTML = '';
+        data.forEach(r=>{
+          // Papa may parse with column names; pass through
+          createRow({id:r.id||Date.now()+Math.random(), name:r.name||'', notes:r.notes||'', height:r.height||'', width:r.width||'', price:r.price||'', diameter:r.diameter||'', weight:r.weight||'', imageData:r.imageData||''});
+        });
+        updateCount();
+      }});
+    });
+
+    // PDF export
+    document.getElementById('exportPdf').addEventListener('click', async ()=>{
+      if(entries.length===0) return alert('No entries to export');
+
+      // build printable pages in offscreen container
+      printArea.innerHTML = '';
+      let pageEl = createPrintPage();
+      printArea.appendChild(pageEl);
+
+      entries.forEach((e,i)=>{
+        if(i>0 && i % MAX_ROWS_PER_PAGE === 0){ pageEl = createPrintPage(); printArea.appendChild(pageEl); }
+
+        const ent = document.createElement('div'); ent.className = 'print-entry';
+        const im = document.createElement('img'); im.src = e.imageData || '';
+        const txt = document.createElement('div'); txt.className = 'print-text';
+        const nameHtml = '<div style="font-weight:700;margin-bottom:4px">' + escapeHtml(e.name||'') + '</div>';
+        const notesHtml = '<div>' + escapeHtml(e.notes||'') + '</div>';
+        const metaHtml = '<div class="print-meta">' +
+          '<div>Height: ' + escapeHtml(e.height||'') + '</div>' +
+          '<div>Width: ' + escapeHtml(e.width||'') + '</div>' +
+          '<div>Price: ' + escapeHtml(e.price||'') + '</div>' +
+          '<div>Diameter: ' + escapeHtml(e.diameter||'') + '</div>' +
+          '<div>Weight: ' + escapeHtml(e.weight||'') + '</div>' +
+        '</div>';
+
+        txt.innerHTML = nameHtml + notesHtml + metaHtml;
+        ent.appendChild(im); ent.appendChild(txt);
+        pageEl.appendChild(ent);
+      });
+
+      // make sure printArea is renderable (offscreen but visible to canvas)
+      printArea.style.display = 'block';
+      printArea.style.position = 'absolute';
+      printArea.style.left = '-9999px';
+      printArea.style.top = '0';
+
+      // render pages one by one
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({unit:'mm',format:'a4'});
+
+      for(let i=0;i<printArea.children.length;i++){
+        const page = printArea.children[i];
+        // wait for images inside this page to load
+        await waitForImages(page);
+        // render
+        const canvas = await html2canvas(page, {scale:2, useCORS:true, backgroundColor:'#ffffff'});
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+        const pdfWidth = 210; // mm
+        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+        if(i>0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      }
+
+      // cleanup
+      printArea.style.display = 'none';
+      printArea.innerHTML = '';
+
+      pdf.save('export.pdf');
+    });
+
+    function createPrintPage(){
+      const p = document.createElement('div'); p.className = 'print-page'; p.style.background = '#fff';
+      return p;
+    }
+
+    function escapeHtml(text){ return (text||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); }
+
+    function waitForImages(container){
+      const imgs = Array.from(container.querySelectorAll('img'));
+      if(imgs.length===0) return Promise.resolve();
+      return Promise.all(imgs.map(img=>{
+        return new Promise(res=>{
+          if(!img.src){ return res(); }
+          if(img.complete && img.naturalWidth!==0) return res();
+          img.onload = ()=> res(); img.onerror = ()=> res();
+        });
+      }));
+    }
+
+    // helpers: add initial row and UI controls
+    document.getElementById('addRow').addEventListener('click', ()=> createRow());
+    createRow();
+    updateCount();
+
+  </script>
+</body>
+</html>
