@@ -86,7 +86,7 @@
 
     // create UI row
     function createRow(init = null){
-      const data = init || {id:Date.now()+Math.random(), name:'', notes:'', height:'', width:'', price:'', diameter:'', weight:'', imageData:''};
+      const data = init || {id:Date.now()+Math.random(), name:'', notes:'', height:'', width:'', length:'', diameter:'', weight:'', imageData:''};
       entries.push(data);
       const idx = entries.length - 1;
 
@@ -120,7 +120,7 @@
       const metaRow = document.createElement('div'); metaRow.className='meta-row';
       const hIn = document.createElement('input'); hIn.placeholder='Height'; hIn.value = data.height || ''; hIn.oninput = ()=> data.height = hIn.value;
       const wIn = document.createElement('input'); wIn.placeholder='Width'; wIn.value = data.width || ''; wIn.oninput = ()=> data.width = wIn.value;
-      const pIn = document.createElement('input'); pIn.placeholder='Price'; pIn.value = data.price || ''; pIn.oninput = ()=> data.price = pIn.value;
+      const pIn = document.createElement('input'); pIn.placeholder='Length'; pIn.value = data.length || ''; pIn.oninput = ()=> data.length = pIn.value;
       const dIn = document.createElement('input'); dIn.placeholder='Diameter'; dIn.value = data.diameter || ''; dIn.oninput = ()=> data.diameter = dIn.value;
       const wtIn = document.createElement('input'); wtIn.placeholder='Weight'; wtIn.value = data.weight || ''; wtIn.oninput = ()=> data.weight = wtIn.value;
 
@@ -167,7 +167,7 @@
     document.getElementById('exportCsv').addEventListener('click', ()=>{
       if(entries.length===0) return alert('No entries to export');
       // ensure imageData included (data URLs)
-      const rows = entries.map(e=>({id:e.id||'',name:e.name||'',notes:e.notes||'',height:e.height||'',width:e.width||'',price:e.price||'',diameter:e.diameter||'',weight:e.weight||'',imageData:e.imageData||''}));
+      const rows = entries.map(e=>({id:e.id||'',name:e.name||'',notes:e.notes||'',height:e.height||'',width:e.width||'',length:e.length||'',diameter:e.diameter||'',weight:e.weight||'',imageData:e.imageData||''}));
       const csv = Papa.unparse(rows);
       const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'export.csv'; a.click();
@@ -182,7 +182,7 @@
         rowsEl.innerHTML = '';
         data.forEach(r=>{
           // Papa may parse with column names; pass through
-          createRow({id:r.id||Date.now()+Math.random(), name:r.name||'', notes:r.notes||'', height:r.height||'', width:r.width||'', price:r.price||'', diameter:r.diameter||'', weight:r.weight||'', imageData:r.imageData||''});
+          createRow({id:r.id||Date.now()+Math.random(), name:r.name||'', notes:r.notes||'', height:r.height||'', width:r.width||'', length:r.length||'', diameter:r.diameter||'', weight:r.weight||'', imageData:r.imageData||''});
         });
         updateCount();
       }});
@@ -208,7 +208,7 @@
         const metaHtml = '<div class="print-meta">' +
           '<div>Height: ' + escapeHtml(e.height||'') + '</div>' +
           '<div>Width: ' + escapeHtml(e.width||'') + '</div>' +
-          '<div>Price: ' + escapeHtml(e.price||'') + '</div>' +
+          '<div>Length: ' + escapeHtml(e.length||'') + '</div>' +
           '<div>Diameter: ' + escapeHtml(e.diameter||'') + '</div>' +
           '<div>Weight: ' + escapeHtml(e.weight||'') + '</div>' +
         '</div>';
